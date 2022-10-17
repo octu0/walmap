@@ -16,56 +16,61 @@ var (
 type Log struct {
 	mutex       *sync.RWMutex
 	buf         *bytes.Buffer
+	indexes     map[string]codec.Index
 	compacting  bool
-	lastIndex   codec.Index
+	currIndex   codec.Index
 	reclaimable uint64
 }
 
-func (l *Log) Write(data []byte) (codec.Index, error) {
+func (l *Log) Write(key string, data []byte) error {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
-	index := l.lastIndex
-	nextIndex, err := codec.Encode(l.buf, index, data)
+	index := l.currIndex
+	nextIndex, err := codec.Encode(l.buf, index, key, data)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	l.lastIndex = nextIndex
-	return index, nil
+	l.indexes[key] = index
+	l.currIndex = nextIndex
+	return nil
 }
 
-func (l *Log) Read(index codec.Index) ([]byte, error) {
+func (l *Log) Read(key string) ([]byte, bool, error) {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
+
+	index, ok := l.indexes[key]
+	if ok != true {
+		return nil, false, nil
+	}
 
 	buf := l.buf.Bytes()
 	_, data, err := codec.Decode(bytes.NewReader(buf[index:]))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return data, nil
+	return data, true, nil
 }
 
-func (l *Log) Delete(index codec.Index) error {
+func (l *Log) Delete(key string) ([]byte, bool, error) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
+	index, ok := l.indexes[key]
+	if ok != true {
+		return nil, false, nil
+	}
+
 	buf := l.buf.Bytes()
-	header, err := codec.DecodeHeader(bytes.NewReader(buf[index:]))
+	_, data, err := codec.Decode(bytes.NewReader(buf[index:]))
 	if err != nil {
-		return err
+		return nil, false, err
 	}
-	prevIndex := header.Prev
-	prevHeader, err := codec.DecodeHeader(bytes.NewReader(buf[prevIndex:]))
-	if err != nil {
-		return err
-	}
-	prevHeader.Next = header.Next
-	if err := codec.RewriteHeader(buf[prevIndex:prevIndex+codec.Index(codec.HeaderSize)], prevHeader); err != nil {
-		return err
-	}
-	l.reclaimable += header.Size + codec.HeaderSize
-	return nil
+
+	delete(l.indexes, key)
+	l.reclaimable += uint64(len(key)+len(data)) + codec.HeaderSize
+	return data, true, nil
 }
 
 func (l *Log) ReclaimableSpace() uint64 {
@@ -75,6 +80,24 @@ func (l *Log) ReclaimableSpace() uint64 {
 	return l.reclaimable
 }
 
+func (l *Log) Len() int {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	return len(l.indexes)
+}
+
+func (l *Log) Keys() []string {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	keys := make([]string, 0, len(l.indexes))
+	for key, _ := range l.indexes {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func (l *Log) compactRunning() bool {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
@@ -82,15 +105,27 @@ func (l *Log) compactRunning() bool {
 	return l.compacting
 }
 
-func (l *Log) makeCopy() (*bytes.Buffer, codec.Index, error) {
+func (l *Log) copyLatest() (*bytes.Buffer, map[string]codec.Index, codec.Index, error) {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
 
-	newLog, err := RestoreLog(bytes.NewReader(l.buf.Bytes()), l.buf.Len(), noopEachFunc)
-	if err != nil {
-		return nil, 0, err
+	oldBuf := l.buf.Bytes()
+	newBuf := bytes.NewBuffer(make([]byte, 0, len(oldBuf)))
+	newIndexes := make(map[string]codec.Index, len(l.indexes))
+	newCurrIndex := codec.Index(0)
+	for key, oldIndex := range l.indexes {
+		_, data, err := codec.Decode(bytes.NewReader(oldBuf[oldIndex:]))
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		next, err := codec.Encode(newBuf, newCurrIndex, key, data)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		newIndexes[key] = newCurrIndex
+		newCurrIndex = next
 	}
-	return newLog.buf, newLog.lastIndex, nil
+	return newBuf, newIndexes, newCurrIndex, nil
 }
 
 func (l *Log) Compact() error {
@@ -107,7 +142,7 @@ func (l *Log) Compact() error {
 		l.mutex.Unlock()
 	}()
 
-	newBuf, newLastIndex, err := l.makeCopy()
+	newBuf, newIndexes, newCurrIndex, err := l.copyLatest()
 	if err != nil {
 		return err
 	}
@@ -116,57 +151,58 @@ func (l *Log) Compact() error {
 	defer l.mutex.Unlock()
 
 	l.buf = newBuf
-	l.lastIndex = newLastIndex
+	l.indexes = newIndexes
+	l.currIndex = newCurrIndex
 	l.reclaimable = 0
 	return nil
 }
 
-func (l *Log) Bytes() []byte {
+func (l *Log) Snapshot(w io.Writer) error {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
 
-	return l.buf.Bytes()
-}
-
-type eachFunc func(codec.Index, []byte) error
-
-func noopEachFunc(codec.Index, []byte) error {
+	if _, err := w.Write(l.buf.Bytes()); err != nil {
+		return err
+	}
 	return nil
 }
 
-func RestoreLog(r io.Reader, initialSize int, each eachFunc) (*Log, error) {
-	lastIndex := codec.Index(0)
-	newBuf := bytes.NewBuffer(make([]byte, 0, initialSize))
+func RestoreLog(r io.Reader, initialLogSize, initialIndexSize int) (*Log, error) {
+	currIndex := codec.Index(0)
+	newBuf := bytes.NewBuffer(make([]byte, 0, initialLogSize))
+	newIndexes := make(map[string]codec.Index, initialIndexSize)
 	for {
-		header, data, err := codec.Decode(r)
+		key, data, err := codec.Decode(r)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, err
 		}
-		if err := each(header.Prev, data); err != nil {
-			return nil, err
-		}
-		next, err := codec.Encode(newBuf, lastIndex, data)
+		next, err := codec.Encode(newBuf, currIndex, key, data)
 		if err != nil {
 			return nil, err
 		}
-		lastIndex = next
+		currIndex = next
+		newIndexes[key] = next
 	}
-
 	return &Log{
-		buf:       newBuf,
-		lastIndex: lastIndex,
+		mutex:       new(sync.RWMutex),
+		buf:         newBuf,
+		compacting:  false,
+		indexes:     newIndexes,
+		currIndex:   currIndex,
+		reclaimable: uint64(0),
 	}, nil
 }
 
-func NewLog(size int) *Log {
+func NewLog(logSize, indexSize int) *Log {
 	return &Log{
 		mutex:       new(sync.RWMutex),
-		buf:         bytes.NewBuffer(make([]byte, 0, size)),
+		buf:         bytes.NewBuffer(make([]byte, 0, logSize)),
 		compacting:  false,
-		lastIndex:   codec.Index(0),
+		indexes:     make(map[string]codec.Index, indexSize),
+		currIndex:   codec.Index(0),
 		reclaimable: uint64(0),
 	}
 }

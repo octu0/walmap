@@ -96,7 +96,24 @@ func (c *WMap) Snapshot(w io.Writer) error {
 	return c.s.Snapshot(w)
 }
 
-func restoreWMap(r io.Reader, funcs ...walmapOptFunc) (*WMap, error) {
+func (c *WMap) ReclaimableSpace() uint64 {
+	sum := uint64(0)
+	for _, m := range c.s.Shards() {
+		sum += m.ReclaimableSpace()
+	}
+	return sum
+}
+
+func (c *WMap) Compact() error {
+	for _, m := range c.s.Shards() {
+		if err := m.Compact(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func Restore(r io.Reader, funcs ...walmapOptFunc) (*WMap, error) {
 	opt := newDefaultOption()
 	for _, fn := range funcs {
 		fn(opt)
@@ -108,7 +125,7 @@ func restoreWMap(r io.Reader, funcs ...walmapOptFunc) (*WMap, error) {
 	return &WMap{s}, nil
 }
 
-func NewWMap(funcs ...walmapOptFunc) *WMap {
+func New(funcs ...walmapOptFunc) *WMap {
 	opt := newDefaultOption()
 	for _, fn := range funcs {
 		fn(opt)

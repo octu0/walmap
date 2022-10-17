@@ -4,15 +4,22 @@ import (
 	"encoding/binary"
 	"io"
 	"sync"
+	"unsafe"
 )
 
 const (
-	prevIndexSize uint64 = 8
-	nextIndexSize uint64 = 8
-	sizeByteSize  uint64 = 8
+	headerKeySize  uint64 = 8
+	headerDataSize uint64 = 8
 
-	HeaderSize uint64 = prevIndexSize + nextIndexSize + sizeByteSize
+	HeaderSize uint64 = headerKeySize + headerDataSize
 )
+
+type Index uint64
+
+type Header struct {
+	KeySize  uint64
+	DataSize uint64
+}
 
 var (
 	codecSizePool = &sync.Pool{
@@ -22,48 +29,26 @@ var (
 	}
 )
 
-type Index uint64
-
-type Header struct {
-	Prev Index
-	Next Index
-	Size uint64
-}
-
-func RewriteHeader(buf []byte, header Header) error {
-	pos := uint64(0)
-	offset := prevIndexSize
-	binary.BigEndian.PutUint64(buf[pos:offset], uint64(header.Prev))
-
-	pos += prevIndexSize
-	offset += nextIndexSize
-	binary.BigEndian.PutUint64(buf[pos:offset], uint64(header.Next))
-
-	pos += nextIndexSize
-	offset += sizeByteSize
-	binary.BigEndian.PutUint64(buf[pos:offset], uint64(header.Size))
-	return nil
-}
-
 func EncodeHeader(w io.Writer, header Header) error {
-	if err := binary.Write(w, binary.BigEndian, header.Prev); err != nil {
+	if err := binary.Write(w, binary.BigEndian, header.KeySize); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.BigEndian, header.Next); err != nil {
-		return err
-	}
-	if err := binary.Write(w, binary.BigEndian, header.Size); err != nil {
+	if err := binary.Write(w, binary.BigEndian, header.DataSize); err != nil {
 		return err
 	}
 	return nil
 }
 
-func Encode(w io.Writer, index Index, data []byte) (Index, error) {
+func Encode(w io.Writer, prev Index, key string, data []byte) (Index, error) {
+	keySize := uint64(len(key))
 	dataSize := uint64(len(data))
-	prev := index
-	next := prev + Index(prevIndexSize+nextIndexSize+sizeByteSize+dataSize)
+	next := Index(uint64(prev) + HeaderSize + keySize + dataSize)
 
-	if err := EncodeHeader(w, Header{prev, next, dataSize}); err != nil {
+	if err := EncodeHeader(w, Header{keySize, dataSize}); err != nil {
+		return 0, err
+	}
+
+	if _, err := w.Write(b(key)); err != nil {
 		return 0, err
 	}
 
@@ -74,11 +59,7 @@ func Encode(w io.Writer, index Index, data []byte) (Index, error) {
 }
 
 func DecodeHeader(r io.Reader) (Header, error) {
-	prev, err := readUint64(r)
-	if err != nil {
-		return Header{}, err
-	}
-	next, err := readUint64(r)
+	keySize, err := readUint64(r)
 	if err != nil {
 		return Header{}, err
 	}
@@ -86,20 +67,24 @@ func DecodeHeader(r io.Reader) (Header, error) {
 	if err != nil {
 		return Header{}, err
 	}
-	return Header{Index(prev), Index(next), dataSize}, nil
+	return Header{keySize, dataSize}, nil
 }
 
-func Decode(r io.Reader) (Header, []byte, error) {
+func Decode(r io.Reader) (string, []byte, error) {
 	header, err := DecodeHeader(r)
 	if err != nil {
-		return Header{}, nil, err
+		return "", nil, err
 	}
 
-	data := make([]byte, header.Size)
-	if _, err := r.Read(data); err != nil {
-		return Header{}, nil, err
+	key := make([]byte, header.KeySize)
+	if _, err := r.Read(key); err != nil {
+		return "", nil, err
 	}
-	return header, data, nil
+	data := make([]byte, header.DataSize)
+	if _, err := r.Read(data); err != nil {
+		return "", nil, err
+	}
+	return str(key), data, nil
 }
 
 func readUint64(r io.Reader) (uint64, error) {
@@ -110,4 +95,12 @@ func readUint64(r io.Reader) (uint64, error) {
 		return 0, err
 	}
 	return binary.BigEndian.Uint64(u64Buf), nil
+}
+
+func b(s string) []byte {
+	return *(*[]byte)(unsafe.Pointer(&s))
+}
+
+func str(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }

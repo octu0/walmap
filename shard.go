@@ -32,6 +32,7 @@ func (s *shards) Snapshot(w io.Writer) error {
 		}
 		bufShards[i] = buf
 	}
+
 	sn := shardsSnapshot{
 		Shards: make([][]byte, len(s.caches)),
 		Size:   len(s.caches),

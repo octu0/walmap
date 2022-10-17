@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/octu0/cmap"
-	"github.com/octu0/walmap/codec"
 )
 
 var (
@@ -15,108 +14,89 @@ var (
 )
 
 type item struct {
-	Key   string
 	Value interface{}
 }
 
 type walCache struct {
 	sync.RWMutex
 
-	log     *Log
-	indexes map[string]codec.Index
+	log *Log
 }
 
 func (w *walCache) Set(key string, value interface{}) {
-	if prevIndex, ok := w.indexes[key]; ok {
-		w.log.Delete(prevIndex)
-	}
-
 	out := bytes.NewBuffer(make([]byte, 0, 64))
-	if err := gob.NewEncoder(out).Encode(item{key, value}); err != nil {
+	if err := gob.NewEncoder(out).Encode(item{value}); err != nil {
 		return
 	}
 
-	index, err := w.log.Write(out.Bytes())
-	if err != nil {
+	if err := w.log.Write(key, out.Bytes()); err != nil {
 		return
 	}
-	w.indexes[key] = index
 }
 
 func (w *walCache) Get(key string) (interface{}, bool) {
-	if index, ok := w.indexes[key]; ok {
-		data, err := w.log.Read(index)
-		if err != nil {
-			return nil, false
-		}
-
-		i := item{}
-		if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
-			return i.Value, true
-		}
+	data, ok, err := w.log.Read(key)
+	if err != nil {
+		return nil, false
 	}
-	return nil, false
+	if ok != true {
+		return nil, false
+	}
+
+	i := item{}
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
+		return nil, false
+	}
+	return i.Value, true
 }
 
 func (w *walCache) Remove(key string) (interface{}, bool) {
-	if index, ok := w.indexes[key]; ok {
-		data, err := w.log.Read(index)
-		if err != nil {
-			return nil, false
-		}
-		i := item{}
-		if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
-			return nil, false
-		}
-
-		w.log.Delete(index)
-		delete(w.indexes, key)
-		return i.Value, true
+	data, ok, err := w.log.Delete(key)
+	if err != nil {
+		return nil, false
 	}
-	return nil, false
+	if ok != true {
+		return nil, false
+	}
+	i := item{}
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
+		return nil, false
+	}
+
+	return i.Value, true
 }
 
 func (w *walCache) Len() int {
-	return len(w.indexes)
+	return w.log.Len()
 }
 
 func (w *walCache) Keys() []string {
-	keys := make([]string, 0, len(w.indexes))
-	for key, _ := range w.indexes {
-		keys = append(keys, key)
-	}
-	return keys
+	return w.log.Keys()
 }
 
 func (w *walCache) Snapshot(iw io.Writer) error {
-	if _, err := iw.Write(w.log.Bytes()); err != nil {
+	if err := w.log.Snapshot(iw); err != nil {
 		return err
 	}
 	return nil
 }
 
+func (w *walCache) ReclaimableSpace() uint64 {
+	return w.log.ReclaimableSpace()
+}
+
+func (w *walCache) Compact() error {
+	return w.log.Compact()
+}
+
 func restoreWalCache(r io.Reader, opt *walmapOpt) (*walCache, error) {
-	indexes := make(map[string]codec.Index, 1024)
-	log, err := RestoreLog(r, opt.initialLogSize, func(index codec.Index, data []byte) error {
-		i := item{}
-		if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
-			return err
-		}
-		indexes[i.Key] = index
-		return nil
-	})
+	log, err := RestoreLog(r, opt.initialLogSize, opt.initialIndexSize)
 	if err != nil {
 		return nil, err
 	}
-	return &walCache{
-		log:     log,
-		indexes: indexes,
-	}, nil
+	return &walCache{log: log}, nil
 }
 
 func newWalCache(opt *walmapOpt) *walCache {
-	return &walCache{
-		log:     NewLog(opt.initialLogSize),
-		indexes: make(map[string]codec.Index, opt.cacheCapacity),
-	}
+	return &walCache{log: NewLog(opt.initialLogSize, opt.initialIndexSize)}
 }
