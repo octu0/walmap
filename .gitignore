@@ -1,0 +1,12 @@
+*~*
+*.db
+*.swp
+*.DS_Store
+*.bak
+**.envrc
+
+/tmp
+/dist
+/data
+/cacheDb
+/coverage.txt
