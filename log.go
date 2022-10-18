@@ -31,6 +31,9 @@ func (l *Log) Write(key string, data []byte) error {
 	if err != nil {
 		return err
 	}
+	if _, ok := l.indexes[key]; ok {
+		l.reclaimable += uint64(len(key)+len(data)) + codec.HeaderSize
+	}
 	l.indexes[key] = index
 	l.currIndex = nextIndex
 	return nil
@@ -96,6 +99,13 @@ func (l *Log) Keys() []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func (l *Log) Size() uint64 {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	return uint64(l.buf.Len())
 }
 
 func (l *Log) compactRunning() bool {
@@ -183,8 +193,8 @@ func RestoreLog(r io.Reader, initialLogSize, initialIndexSize int) (*Log, error)
 		if err != nil {
 			return nil, err
 		}
+		newIndexes[key] = currIndex
 		currIndex = next
-		newIndexes[key] = next
 	}
 	return &Log{
 		mutex:       new(sync.RWMutex),

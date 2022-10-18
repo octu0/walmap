@@ -3,14 +3,25 @@ package walmap
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"io"
+	"os"
 	"sync"
 
 	"github.com/octu0/cmap"
+	"github.com/pkg/errors"
 )
 
 var (
 	_ cmap.Cache = (*walCache)(nil)
+)
+
+var (
+	encodePool = &sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 0, 64))
+		},
+	}
 )
 
 type item struct {
@@ -24,12 +35,17 @@ type walCache struct {
 }
 
 func (w *walCache) Set(key string, value interface{}) {
-	out := bytes.NewBuffer(make([]byte, 0, 64))
+	out := encodePool.Get().(*bytes.Buffer)
+	defer encodePool.Put(out)
+	out.Reset()
+
 	if err := gob.NewEncoder(out).Encode(item{value}); err != nil {
+		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
 		return
 	}
 
 	if err := w.log.Write(key, out.Bytes()); err != nil {
+		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
 		return
 	}
 }
@@ -45,6 +61,7 @@ func (w *walCache) Get(key string) (interface{}, bool) {
 
 	i := item{}
 	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
+		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
 		return nil, false
 	}
 	return i.Value, true
@@ -60,9 +77,9 @@ func (w *walCache) Remove(key string) (interface{}, bool) {
 	}
 	i := item{}
 	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
+		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
 		return nil, false
 	}
-
 	return i.Value, true
 }
 
@@ -72,6 +89,10 @@ func (w *walCache) Len() int {
 
 func (w *walCache) Keys() []string {
 	return w.log.Keys()
+}
+
+func (w *walCache) Size() uint64 {
+	return w.log.Size()
 }
 
 func (w *walCache) Snapshot(iw io.Writer) error {

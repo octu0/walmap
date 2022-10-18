@@ -4,9 +4,23 @@ import (
 	"bytes"
 	"encoding/gob"
 	"io"
+	"sync"
 
 	"github.com/octu0/cmap"
 )
+
+var (
+	snapshotBufPool = &sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 0, 1024))
+		},
+	}
+)
+
+type shardsSnapshot struct {
+	Shards [][]byte
+	Size   int
+}
 
 type shards struct {
 	caches []*walCache
@@ -25,12 +39,21 @@ func (s *shards) Shards() []*walCache {
 
 func (s *shards) Snapshot(w io.Writer) error {
 	bufShards := make([]*bytes.Buffer, len(s.caches))
+	for i, _ := range s.caches {
+		buf := snapshotBufPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		bufShards[i] = buf
+	}
+	defer func() {
+		for i, _ := range s.caches {
+			snapshotBufPool.Put(bufShards[i])
+		}
+	}()
+
 	for i, cache := range s.caches {
-		buf := bytes.NewBuffer(nil)
-		if err := cache.Snapshot(buf); err != nil {
+		if err := cache.Snapshot(bufShards[i]); err != nil {
 			return err
 		}
-		bufShards[i] = buf
 	}
 
 	sn := shardsSnapshot{
@@ -44,11 +67,6 @@ func (s *shards) Snapshot(w io.Writer) error {
 		return err
 	}
 	return nil
-}
-
-type shardsSnapshot struct {
-	Shards [][]byte
-	Size   int
 }
 
 func restoreShards(r io.Reader, opt *walmapOpt) (*shards, error) {

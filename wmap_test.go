@@ -151,7 +151,7 @@ func BenchmarkSnapshot(b *testing.B) {
 		tb.ResetTimer()
 		for i := 0; i < tb.N; i += 1 {
 			r := bytes.NewReader(buf.Bytes())
-			w, err := RestoreWMap(r)
+			w, err := Restore(r)
 			if err != nil {
 				tb.Fatalf("no error: %+v", err)
 			}
@@ -170,7 +170,7 @@ func BenchmarkSnapshot(b *testing.B) {
 		tb.ResetTimer()
 		for i := 0; i < tb.N; i += 1 {
 			r := bytes.NewReader(buf.Bytes())
-			w, err := RestoreWMap(r)
+			w, err := Restore(r)
 			if err != nil {
 				tb.Fatalf("no error: %+v", err)
 			}

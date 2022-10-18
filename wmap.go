@@ -104,6 +104,14 @@ func (c *WMap) ReclaimableSpace() uint64 {
 	return sum
 }
 
+func (c *WMap) Size() uint64 {
+	sum := uint64(0)
+	for _, m := range c.s.Shards() {
+		sum += m.Size()
+	}
+	return sum
+}
+
 func (c *WMap) Compact() error {
 	for _, m := range c.s.Shards() {
 		if err := m.Compact(); err != nil {
