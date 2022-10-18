@@ -4,3 +4,5 @@ github.com/octu0/chanque v1.0.15/go.mod h1:EVqq9Fy4sUzxxugDmrXpn0Ai7ZxDaizwxcH5S
 github.com/octu0/cmap v1.0.1 h1:m44xycyHOGVH09zMvMfvi7CSayoUkyHUKXMIk3OLXWE=
 github.com/octu0/cmap v1.0.1/go.mod h1:MmvLg298jf/89oZmd0YYIymbMHekdTp6EABszkHGCvo=
 github.com/orcaman/concurrent-map v0.0.0-20210501183033-44dafcb38ecc/go.mod h1:Lu3tH6HLW3feq74c2GC+jIMS/K2CFcDWnWD9XkenwhI=
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
