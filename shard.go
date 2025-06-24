@@ -22,7 +22,7 @@ type shards struct {
 	caches  []*walCache
 	size    uint64
 	hash    cmap.CMapHashFunc
-	bufPool *sync.Pool
+	bufPool BufferPool
 }
 
 func (s *shards) GetShard(key string) cmap.Cache {
@@ -35,12 +35,12 @@ func (s *shards) Shards() []*walCache {
 }
 
 func (s *shards) Snapshot(w io.Writer) error {
-	buf := s.bufPool.Get().(*bytes.Buffer)
-	defer s.bufPool.Put(buf)
-
 	if err := encodeShardSize(w, s.size); err != nil {
 		return errors.WithStack(err)
 	}
+
+	buf := s.bufPool.Get()
+	defer s.bufPool.Put(buf)
 
 	for _, cache := range s.caches {
 		buf.Reset()
@@ -75,16 +75,7 @@ func restoreShards(r io.Reader, opt *walmapOpt) (*shards, error) {
 		}
 		caches = append(caches, c)
 	}
-	pool := newBufferPool(opt)
-	return &shards{caches, shardSize, opt.hashFunc, pool}, nil
-}
-
-func newBufferPool(opt *walmapOpt) *sync.Pool {
-	return &sync.Pool{
-		New: func() any {
-			return bytes.NewBuffer(make([]byte, 0, opt.bufferSize))
-		},
-	}
+	return &shards{caches, shardSize, opt.hashFunc, opt.bufferPool}, nil
 }
 
 func newShards(opt *walmapOpt) *shards {
@@ -93,8 +84,7 @@ func newShards(opt *walmapOpt) *shards {
 	for i := 0; i < opt.shardSize; i += 1 {
 		caches[i] = newWalCache(opt)
 	}
-	pool := newBufferPool(opt)
-	return &shards{caches, size64, opt.hashFunc, pool}
+	return &shards{caches, size64, opt.hashFunc, opt.bufferPool}
 }
 
 func encodeShardSize(w io.Writer, size uint64) error {

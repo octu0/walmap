@@ -9,7 +9,6 @@ import (
 
 const (
 	defaultShardSize     int = 1024
-	defaultBufferSize    int = 16 * 1024
 	defaultCacheCapacity int = 64
 	defaultLogSize       int = 32 * 1024
 	defaultIndexSize     int = 1024
@@ -19,22 +18,16 @@ type walmapOptFunc func(*walmapOpt)
 
 type walmapOpt struct {
 	shardSize        int
-	bufferSize       int
 	cacheCapacity    int
 	initialLogSize   int
 	initialIndexSize int
 	hashFunc         cmap.CMapHashFunc
+	bufferPool       BufferPool
 }
 
 func WithShardSize(size int) walmapOptFunc {
 	return func(opt *walmapOpt) {
 		opt.shardSize = size
-	}
-}
-
-func WithBufferSize(size int) walmapOptFunc {
-	return func(opt *walmapOpt) {
-		opt.bufferSize = size
 	}
 }
 
@@ -62,14 +55,20 @@ func WithHashFunc(hashFunc cmap.CMapHashFunc) walmapOptFunc {
 	}
 }
 
+func WithBufferPool(pool BufferPool) walmapOptFunc {
+	return func(opt *walmapOpt) {
+		opt.bufferPool = pool
+	}
+}
+
 func newDefaultOption() *walmapOpt {
 	return &walmapOpt{
 		shardSize:        defaultShardSize,
-		bufferSize:       defaultBufferSize,
 		cacheCapacity:    defaultCacheCapacity,
 		initialLogSize:   defaultLogSize,
 		initialIndexSize: defaultIndexSize,
 		hashFunc:         cmap.NewXXHashFunc(),
+		bufferPool:       newDefaultBufferPool(),
 	}
 }
 

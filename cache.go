@@ -16,14 +16,6 @@ var (
 	_ cmap.Cache = (*walCache)(nil)
 )
 
-var (
-	encodePool = &sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, 0, 64))
-		},
-	}
-)
-
 type item struct {
 	Value interface{}
 }
@@ -31,12 +23,13 @@ type item struct {
 type walCache struct {
 	sync.RWMutex
 
-	log *Log
+	log     *Log
+	bufPool BufferPool
 }
 
 func (w *walCache) Set(key string, value interface{}) {
-	out := encodePool.Get().(*bytes.Buffer)
-	defer encodePool.Put(out)
+	out := w.bufPool.Get()
+	defer w.bufPool.Put(out)
 	out.Reset()
 
 	if err := gob.NewEncoder(out).Encode(item{value}); err != nil {
@@ -119,5 +112,8 @@ func restoreWalCache(r io.Reader, opt *walmapOpt) (*walCache, error) {
 }
 
 func newWalCache(opt *walmapOpt) *walCache {
-	return &walCache{log: NewLog(opt.initialLogSize, opt.initialIndexSize)}
+	return &walCache{
+		log:     NewLog(opt.initialLogSize, opt.initialIndexSize),
+		bufPool: opt.bufferPool,
+	}
 }
