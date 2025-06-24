@@ -6,11 +6,68 @@ import (
 	"github.com/octu0/cmap"
 )
 
-type WMap struct {
+const (
+	defaultShardSize     int = 1024
+	defaultCacheCapacity int = 64
+	defaultLogSize       int = 32 * 1024
+	defaultIndexSize     int = 1024
+)
+
+type walmapOptFunc func(*walmapOpt)
+
+type walmapOpt struct {
+	shardSize        int
+	cacheCapacity    int
+	initialLogSize   int
+	initialIndexSize int
+	hashFunc         cmap.CMapHashFunc
+}
+
+func WithShardSize(size int) walmapOptFunc {
+	return func(opt *walmapOpt) {
+		opt.shardSize = size
+	}
+}
+
+func WithCacheCapacity(size int) walmapOptFunc {
+	return func(opt *walmapOpt) {
+		opt.cacheCapacity = size
+	}
+}
+
+func WithInitialLogSize(size int) walmapOptFunc {
+	return func(opt *walmapOpt) {
+		opt.initialLogSize = size
+	}
+}
+
+func WithInitialIndexSize(size int) walmapOptFunc {
+	return func(opt *walmapOpt) {
+		opt.initialIndexSize = size
+	}
+}
+
+func WithHashFunc(hashFunc cmap.CMapHashFunc) walmapOptFunc {
+	return func(opt *walmapOpt) {
+		opt.hashFunc = hashFunc
+	}
+}
+
+func newDefaultOption() *walmapOpt {
+	return &walmapOpt{
+		shardSize:        defaultShardSize,
+		cacheCapacity:    defaultCacheCapacity,
+		initialLogSize:   defaultLogSize,
+		initialIndexSize: defaultIndexSize,
+		hashFunc:         cmap.NewXXHashFunc(),
+	}
+}
+
+type WALMap struct {
 	s *shards
 }
 
-func (c *WMap) Set(key string, value interface{}) {
+func (c *WALMap) Set(key string, value interface{}) {
 	m := c.s.GetShard(key)
 	m.Lock()
 	defer m.Unlock()
@@ -18,7 +75,7 @@ func (c *WMap) Set(key string, value interface{}) {
 	m.Set(key, value)
 }
 
-func (c *WMap) Get(key string) (interface{}, bool) {
+func (c *WALMap) Get(key string) (interface{}, bool) {
 	m := c.s.GetShard(key)
 	m.RLock()
 	defer m.RUnlock()
@@ -26,7 +83,7 @@ func (c *WMap) Get(key string) (interface{}, bool) {
 	return m.Get(key)
 }
 
-func (c *WMap) Remove(key string) (interface{}, bool) {
+func (c *WALMap) Remove(key string) (interface{}, bool) {
 	m := c.s.GetShard(key)
 	m.Lock()
 	defer m.Unlock()
@@ -34,7 +91,7 @@ func (c *WMap) Remove(key string) (interface{}, bool) {
 	return m.Remove(key)
 }
 
-func (c *WMap) Len() int {
+func (c *WALMap) Len() int {
 	count := 0
 	for _, m := range c.s.Shards() {
 		m.RLock()
@@ -44,7 +101,7 @@ func (c *WMap) Len() int {
 	return count
 }
 
-func (c *WMap) Keys() []string {
+func (c *WALMap) Keys() []string {
 	shards := c.s.Shards()
 	keys := make([]string, 0, len(shards))
 	for _, m := range shards {
@@ -55,7 +112,7 @@ func (c *WMap) Keys() []string {
 	return keys
 }
 
-func (c *WMap) Upsert(key string, fn cmap.UpsertFunc) (newValue interface{}) {
+func (c *WALMap) Upsert(key string, fn cmap.UpsertFunc) (newValue interface{}) {
 	m := c.s.GetShard(key)
 	m.Lock()
 	defer m.Unlock()
@@ -66,7 +123,7 @@ func (c *WMap) Upsert(key string, fn cmap.UpsertFunc) (newValue interface{}) {
 	return
 }
 
-func (c *WMap) SetIfAbsent(key string, value interface{}) (updated bool) {
+func (c *WALMap) SetIfAbsent(key string, value interface{}) (updated bool) {
 	m := c.s.GetShard(key)
 	m.Lock()
 	defer m.Unlock()
@@ -78,7 +135,7 @@ func (c *WMap) SetIfAbsent(key string, value interface{}) (updated bool) {
 	return false
 }
 
-func (c *WMap) RemoveIf(key string, fn cmap.RemoveIfFunc) (removed bool) {
+func (c *WALMap) RemoveIf(key string, fn cmap.RemoveIfFunc) (removed bool) {
 	m := c.s.GetShard(key)
 	m.Lock()
 	defer m.Unlock()
@@ -92,11 +149,11 @@ func (c *WMap) RemoveIf(key string, fn cmap.RemoveIfFunc) (removed bool) {
 	return false
 }
 
-func (c *WMap) Snapshot(w io.Writer) error {
+func (c *WALMap) Snapshot(w io.Writer) error {
 	return c.s.Snapshot(w)
 }
 
-func (c *WMap) ReclaimableSpace() uint64 {
+func (c *WALMap) ReclaimableSpace() uint64 {
 	sum := uint64(0)
 	for _, m := range c.s.Shards() {
 		sum += m.ReclaimableSpace()
@@ -104,7 +161,7 @@ func (c *WMap) ReclaimableSpace() uint64 {
 	return sum
 }
 
-func (c *WMap) Size() uint64 {
+func (c *WALMap) Size() uint64 {
 	sum := uint64(0)
 	for _, m := range c.s.Shards() {
 		sum += m.Size()
@@ -112,7 +169,7 @@ func (c *WMap) Size() uint64 {
 	return sum
 }
 
-func (c *WMap) Compact() error {
+func (c *WALMap) Compact() error {
 	for _, m := range c.s.Shards() {
 		if err := m.Compact(); err != nil {
 			return err
@@ -121,7 +178,7 @@ func (c *WMap) Compact() error {
 	return nil
 }
 
-func Restore(r io.Reader, funcs ...walmapOptFunc) (*WMap, error) {
+func Restore(r io.Reader, funcs ...walmapOptFunc) (*WALMap, error) {
 	opt := newDefaultOption()
 	for _, fn := range funcs {
 		fn(opt)
@@ -130,14 +187,14 @@ func Restore(r io.Reader, funcs ...walmapOptFunc) (*WMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WMap{s}, nil
+	return &WALMap{s}, nil
 }
 
-func New(funcs ...walmapOptFunc) *WMap {
+func New(funcs ...walmapOptFunc) *WALMap {
 	opt := newDefaultOption()
 	for _, fn := range funcs {
 		fn(opt)
 	}
 	s := newShards(opt)
-	return &WMap{s}
+	return &WALMap{s}
 }
