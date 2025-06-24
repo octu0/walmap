@@ -9,23 +9,16 @@ import (
 	"github.com/octu0/cmap"
 )
 
-var (
-	snapshotBufPool = &sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, 0, 1024))
-		},
-	}
-)
-
 type shardsSnapshot struct {
 	Shards [][]byte
 	Size   int
 }
 
 type shards struct {
-	caches []*walCache
-	size   uint64
-	hash   cmap.CMapHashFunc
+	caches  []*walCache
+	size    uint64
+	hash    cmap.CMapHashFunc
+	bufPool *sync.Pool
 }
 
 func (s *shards) GetShard(key string) cmap.Cache {
@@ -40,13 +33,13 @@ func (s *shards) Shards() []*walCache {
 func (s *shards) Snapshot(w io.Writer) error {
 	bufShards := make([]*bytes.Buffer, len(s.caches))
 	for i, _ := range s.caches {
-		buf := snapshotBufPool.Get().(*bytes.Buffer)
+		buf := s.bufPool.Get().(*bytes.Buffer)
 		buf.Reset()
 		bufShards[i] = buf
 	}
 	defer func() {
 		for i, _ := range s.caches {
-			snapshotBufPool.Put(bufShards[i])
+			s.bufPool.Put(bufShards[i])
 		}
 	}()
 
@@ -69,6 +62,14 @@ func (s *shards) Snapshot(w io.Writer) error {
 	return nil
 }
 
+func newBufferPool(opt *walmapOpt) *sync.Pool {
+	return &sync.Pool{
+		New: func() any {
+			return bytes.NewBuffer(make([]byte, 0, opt.bufferSize))
+		},
+	}
+}
+
 func restoreShards(r io.Reader, opt *walmapOpt) (*shards, error) {
 	sn := shardsSnapshot{}
 	if err := gob.NewDecoder(r).Decode(&sn); err != nil {
@@ -82,7 +83,8 @@ func restoreShards(r io.Reader, opt *walmapOpt) (*shards, error) {
 		}
 		caches[i] = c
 	}
-	return &shards{caches, uint64(sn.Size), opt.hashFunc}, nil
+	pool := newBufferPool(opt)
+	return &shards{caches, uint64(sn.Size), opt.hashFunc, pool}, nil
 }
 
 func newShards(opt *walmapOpt) *shards {
@@ -91,5 +93,6 @@ func newShards(opt *walmapOpt) *shards {
 	for i := 0; i < opt.shardSize; i += 1 {
 		caches[i] = newWalCache(opt)
 	}
-	return &shards{caches, size64, opt.hashFunc}
+	pool := newBufferPool(opt)
+	return &shards{caches, size64, opt.hashFunc, pool}
 }
