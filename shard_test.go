@@ -71,7 +71,7 @@ func TestShardsSnapshotRestore(t *testing.T) {
 	s1.GetShard("test4").Set("test4", "value4")
 	s1.GetShard("test5").Set("test5", "value5")
 
-	t.Logf("org")
+	t.Logf("check original")
 	check(t, s1)
 
 	out := bytes.NewBuffer(nil)
@@ -84,6 +84,6 @@ func TestShardsSnapshotRestore(t *testing.T) {
 		t.Fatalf("no error: %+v", err)
 	}
 
-	t.Logf("restored")
+	t.Logf("check restored")
 	check(t, s2)
 }

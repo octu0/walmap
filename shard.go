@@ -2,30 +2,27 @@ package walmap
 
 import (
 	"bytes"
-	"encoding/gob"
+	"encoding/binary"
 	"io"
 	"sync"
 
 	"github.com/octu0/cmap"
+	"github.com/pkg/errors"
 )
 
 var (
-	snapshotBufPool = &sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, 0, 1024))
+	dataSizePool = &sync.Pool{
+		New: func() any {
+			return make([]byte, 8)
 		},
 	}
 )
 
-type shardsSnapshot struct {
-	Shards [][]byte
-	Size   int
-}
-
 type shards struct {
-	caches []*walCache
-	size   uint64
-	hash   cmap.CMapHashFunc
+	caches  []*walCache
+	size    uint64
+	hash    cmap.CMapHashFunc
+	bufPool BufferPool
 }
 
 func (s *shards) GetShard(key string) cmap.Cache {
@@ -38,51 +35,47 @@ func (s *shards) Shards() []*walCache {
 }
 
 func (s *shards) Snapshot(w io.Writer) error {
-	bufShards := make([]*bytes.Buffer, len(s.caches))
-	for i, _ := range s.caches {
-		buf := snapshotBufPool.Get().(*bytes.Buffer)
+	if err := encodeShardSize(w, s.size); err != nil {
+		return errors.WithStack(err)
+	}
+
+	buf := s.bufPool.Get()
+	defer s.bufPool.Put(buf)
+
+	for _, cache := range s.caches {
 		buf.Reset()
-		bufShards[i] = buf
-	}
-	defer func() {
-		for i, _ := range s.caches {
-			snapshotBufPool.Put(bufShards[i])
+		if err := cache.Snapshot(buf); err != nil {
+			return errors.WithStack(err)
 		}
-	}()
-
-	for i, cache := range s.caches {
-		if err := cache.Snapshot(bufShards[i]); err != nil {
-			return err
+		if err := encodeData(w, buf.Bytes()); err != nil {
+			return errors.WithStack(err)
 		}
-	}
-
-	sn := shardsSnapshot{
-		Shards: make([][]byte, len(s.caches)),
-		Size:   len(s.caches),
-	}
-	for i, _ := range s.caches {
-		sn.Shards[i] = bufShards[i].Bytes()
-	}
-	if err := gob.NewEncoder(w).Encode(sn); err != nil {
-		return err
 	}
 	return nil
 }
 
 func restoreShards(r io.Reader, opt *walmapOpt) (*shards, error) {
-	sn := shardsSnapshot{}
-	if err := gob.NewDecoder(r).Decode(&sn); err != nil {
-		return nil, err
+	shardSize, err := decodeShardSize(r)
+	if err != nil {
+		return nil, errors.WithStack(err)
 	}
-	caches := make([]*walCache, sn.Size)
-	for i := 0; i < sn.Size; i += 1 {
-		c, err := restoreWalCache(bytes.NewReader(sn.Shards[i]), opt)
+
+	caches := make([]*walCache, 0, shardSize)
+	for {
+		data, err := decodeData(r)
 		if err != nil {
-			return nil, err
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, errors.WithStack(err)
 		}
-		caches[i] = c
+		c, err := restoreWalCache(bytes.NewReader(data), opt)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		caches = append(caches, c)
 	}
-	return &shards{caches, uint64(sn.Size), opt.hashFunc}, nil
+	return &shards{caches, shardSize, opt.hashFunc, opt.bufferPool}, nil
 }
 
 func newShards(opt *walmapOpt) *shards {
@@ -91,5 +84,48 @@ func newShards(opt *walmapOpt) *shards {
 	for i := 0; i < opt.shardSize; i += 1 {
 		caches[i] = newWalCache(opt)
 	}
-	return &shards{caches, size64, opt.hashFunc}
+	return &shards{caches, size64, opt.hashFunc, opt.bufferPool}
+}
+
+func encodeShardSize(w io.Writer, size uint64) error {
+	if err := binary.Write(w, binary.BigEndian, size); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func decodeShardSize(r io.Reader) (uint64, error) {
+	u64Buf := dataSizePool.Get().([]byte)
+	defer dataSizePool.Put(u64Buf)
+
+	if _, err := r.Read(u64Buf); err != nil {
+		return 0, errors.WithStack(err)
+	}
+	return binary.BigEndian.Uint64(u64Buf), nil
+}
+
+func encodeData(w io.Writer, data []byte) error {
+	if err := binary.Write(w, binary.BigEndian, uint64(len(data))); err != nil {
+		return errors.WithStack(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func decodeData(r io.Reader) ([]byte, error) {
+	u64Buf := dataSizePool.Get().([]byte)
+	defer dataSizePool.Put(u64Buf)
+
+	if _, err := r.Read(u64Buf); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	size := binary.BigEndian.Uint64(u64Buf)
+
+	data := make([]byte, size)
+	if _, err := r.Read(data); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return data, nil
 }

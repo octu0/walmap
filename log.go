@@ -2,11 +2,11 @@ package walmap
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"sync"
 
 	"github.com/octu0/walmap/codec"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -29,7 +29,7 @@ func (l *Log) Write(key string, data []byte) error {
 	index := l.currIndex
 	nextIndex, err := codec.Encode(l.buf, index, key, data)
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if _, ok := l.indexes[key]; ok {
 		l.reclaimable += uint64(len(key)+len(data)) + codec.HeaderSize
@@ -51,7 +51,7 @@ func (l *Log) Read(key string) ([]byte, bool, error) {
 	buf := l.buf.Bytes()
 	_, data, err := codec.Decode(bytes.NewReader(buf[index:]))
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.WithStack(err)
 	}
 	return data, true, nil
 }
@@ -68,7 +68,7 @@ func (l *Log) Delete(key string) ([]byte, bool, error) {
 	buf := l.buf.Bytes()
 	_, data, err := codec.Decode(bytes.NewReader(buf[index:]))
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.WithStack(err)
 	}
 
 	delete(l.indexes, key)
@@ -126,11 +126,11 @@ func (l *Log) copyLatest() (*bytes.Buffer, map[string]codec.Index, codec.Index, 
 	for key, oldIndex := range l.indexes {
 		_, data, err := codec.Decode(bytes.NewReader(oldBuf[oldIndex:]))
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, 0, errors.WithStack(err)
 		}
 		next, err := codec.Encode(newBuf, newCurrIndex, key, data)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, 0, errors.WithStack(err)
 		}
 		newIndexes[key] = newCurrIndex
 		newCurrIndex = next
@@ -187,11 +187,11 @@ func RestoreLog(r io.Reader, initialLogSize, initialIndexSize int) (*Log, error)
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 		next, err := codec.Encode(newBuf, currIndex, key, data)
 		if err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 		newIndexes[key] = currIndex
 		currIndex = next

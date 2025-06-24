@@ -3,7 +3,8 @@ module github.com/octu0/walmap
 go 1.19
 
 require (
-	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/octu0/cmap v1.0.1 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
+	github.com/octu0/cmap v1.0.3
+	github.com/pkg/errors v0.9.1
 )
+
+require github.com/cespare/xxhash/v2 v2.3.0 // indirect

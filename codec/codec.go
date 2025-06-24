@@ -5,6 +5,8 @@ import (
 	"io"
 	"sync"
 	"unsafe"
+
+	"github.com/pkg/errors"
 )
 
 const (
@@ -31,10 +33,10 @@ var (
 
 func EncodeHeader(w io.Writer, header Header) error {
 	if err := binary.Write(w, binary.BigEndian, header.KeySize); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := binary.Write(w, binary.BigEndian, header.DataSize); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -45,15 +47,15 @@ func Encode(w io.Writer, prev Index, key string, data []byte) (Index, error) {
 	next := Index(uint64(prev) + HeaderSize + keySize + dataSize)
 
 	if err := EncodeHeader(w, Header{keySize, dataSize}); err != nil {
-		return 0, err
+		return 0, errors.WithStack(err)
 	}
 
 	if _, err := w.Write(b(key)); err != nil {
-		return 0, err
+		return 0, errors.WithStack(err)
 	}
 
 	if _, err := w.Write(data); err != nil {
-		return 0, err
+		return 0, errors.WithStack(err)
 	}
 	return next, nil
 }
@@ -61,11 +63,11 @@ func Encode(w io.Writer, prev Index, key string, data []byte) (Index, error) {
 func DecodeHeader(r io.Reader) (Header, error) {
 	keySize, err := readUint64(r)
 	if err != nil {
-		return Header{}, err
+		return Header{}, errors.WithStack(err)
 	}
 	dataSize, err := readUint64(r)
 	if err != nil {
-		return Header{}, err
+		return Header{}, errors.WithStack(err)
 	}
 	return Header{keySize, dataSize}, nil
 }
@@ -73,16 +75,16 @@ func DecodeHeader(r io.Reader) (Header, error) {
 func Decode(r io.Reader) (string, []byte, error) {
 	header, err := DecodeHeader(r)
 	if err != nil {
-		return "", nil, err
+		return "", nil, errors.WithStack(err)
 	}
 
 	key := make([]byte, header.KeySize)
 	if _, err := r.Read(key); err != nil {
-		return "", nil, err
+		return "", nil, errors.WithStack(err)
 	}
 	data := make([]byte, header.DataSize)
 	if _, err := r.Read(data); err != nil {
-		return "", nil, err
+		return "", nil, errors.WithStack(err)
 	}
 	return str(key), data, nil
 }
@@ -92,7 +94,7 @@ func readUint64(r io.Reader) (uint64, error) {
 	defer codecSizePool.Put(u64Buf)
 
 	if _, err := r.Read(u64Buf); err != nil {
-		return 0, err
+		return 0, errors.WithStack(err)
 	}
 	return binary.BigEndian.Uint64(u64Buf), nil
 }
