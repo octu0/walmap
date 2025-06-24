@@ -3,11 +3,11 @@ package walmap
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"io"
 	"sync"
 
 	"github.com/octu0/cmap"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -39,16 +39,16 @@ func (s *shards) Snapshot(w io.Writer) error {
 	defer s.bufPool.Put(buf)
 
 	if err := encodeShardSize(w, s.size); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 
 	for _, cache := range s.caches {
 		buf.Reset()
 		if err := cache.Snapshot(buf); err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 		if err := encodeData(w, buf.Bytes()); err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -57,7 +57,7 @@ func (s *shards) Snapshot(w io.Writer) error {
 func restoreShards(r io.Reader, opt *walmapOpt) (*shards, error) {
 	shardSize, err := decodeShardSize(r)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 
 	caches := make([]*walCache, 0, shardSize)
@@ -67,11 +67,11 @@ func restoreShards(r io.Reader, opt *walmapOpt) (*shards, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 		c, err := restoreWalCache(bytes.NewReader(data), opt)
 		if err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 		caches = append(caches, c)
 	}
@@ -99,7 +99,7 @@ func newShards(opt *walmapOpt) *shards {
 
 func encodeShardSize(w io.Writer, size uint64) error {
 	if err := binary.Write(w, binary.BigEndian, size); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -109,17 +109,17 @@ func decodeShardSize(r io.Reader) (uint64, error) {
 	defer dataSizePool.Put(u64Buf)
 
 	if _, err := r.Read(u64Buf); err != nil {
-		return 0, err
+		return 0, errors.WithStack(err)
 	}
 	return binary.BigEndian.Uint64(u64Buf), nil
 }
 
 func encodeData(w io.Writer, data []byte) error {
 	if err := binary.Write(w, binary.BigEndian, uint64(len(data))); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if _, err := w.Write(data); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -129,13 +129,13 @@ func decodeData(r io.Reader) ([]byte, error) {
 	defer dataSizePool.Put(u64Buf)
 
 	if _, err := r.Read(u64Buf); err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	size := binary.BigEndian.Uint64(u64Buf)
 
 	data := make([]byte, size)
 	if _, err := r.Read(data); err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	return data, nil
 }

@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/octu0/cmap"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -159,7 +160,10 @@ func (c *WALMap) RemoveIf(key string, fn cmap.RemoveIfFunc) (removed bool) {
 }
 
 func (c *WALMap) Snapshot(w io.Writer) error {
-	return c.s.Snapshot(w)
+	if err := c.s.Snapshot(w); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (c *WALMap) ReclaimableSpace() uint64 {
@@ -181,7 +185,7 @@ func (c *WALMap) Size() uint64 {
 func (c *WALMap) Compact() error {
 	for _, m := range c.s.Shards() {
 		if err := m.Compact(); err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -194,7 +198,7 @@ func Restore(r io.Reader, funcs ...walmapOptFunc) (*WALMap, error) {
 	}
 	s, err := restoreShards(r, opt)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	return &WALMap{s}, nil
 }

@@ -97,7 +97,7 @@ func (w *walCache) Size() uint64 {
 
 func (w *walCache) Snapshot(iw io.Writer) error {
 	if err := w.log.Snapshot(iw); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (w *walCache) Compact() error {
 func restoreWalCache(r io.Reader, opt *walmapOpt) (*walCache, error) {
 	log, err := RestoreLog(r, opt.initialLogSize, opt.initialIndexSize)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	return &walCache{log: log}, nil
 }
