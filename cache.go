@@ -27,23 +27,23 @@ type walCache struct {
 	bufPool BufferPool
 }
 
-func (w *walCache) Set(key string, value interface{}) {
+func (w *walCache) Set(key string, value any) {
 	out := w.bufPool.Get()
 	defer w.bufPool.Put(out)
 	out.Reset()
 
 	if err := gob.NewEncoder(out).Encode(item{value}); err != nil {
-		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
+		fmt.Fprintf(os.Stderr, "Set(%s): %+v", key, errors.WithStack(err))
 		return
 	}
 
 	if err := w.log.Write(key, out.Bytes()); err != nil {
-		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
+		fmt.Fprintf(os.Stderr, "Set(Log(%s)): %+v", key, errors.WithStack(err))
 		return
 	}
 }
 
-func (w *walCache) Get(key string) (interface{}, bool) {
+func (w *walCache) Get(key string) (any, bool) {
 	data, ok, err := w.log.Read(key)
 	if err != nil {
 		return nil, false
@@ -54,7 +54,7 @@ func (w *walCache) Get(key string) (interface{}, bool) {
 
 	i := item{}
 	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
-		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
+		fmt.Fprintf(os.Stderr, "Get(%s): %+v", key, errors.WithStack(err))
 		return nil, false
 	}
 	return i.Value, true
@@ -70,7 +70,7 @@ func (w *walCache) Remove(key string) (interface{}, bool) {
 	}
 	i := item{}
 	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&i); err != nil {
-		os.Stderr.Write([]byte(fmt.Sprintf("%+v", errors.WithStack(err))))
+		fmt.Fprintf(os.Stderr, "Remove(%s): %+v", key, errors.WithStack(err))
 		return nil, false
 	}
 	return i.Value, true

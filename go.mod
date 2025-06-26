@@ -1,6 +1,6 @@
 module github.com/octu0/walmap
 
-go 1.19
+go 1.24
 
 require (
 	github.com/octu0/cmap v1.0.3
