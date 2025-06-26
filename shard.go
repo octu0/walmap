@@ -87,25 +87,38 @@ func newShards(opt *walmapOpt) *shards {
 	return &shards{caches, size64, opt.hashFunc, opt.bufferPool}
 }
 
-func encodeShardSize(w io.Writer, size uint64) error {
-	if err := binary.Write(w, binary.BigEndian, size); err != nil {
+func writeUint64(w io.Writer, data uint64) error {
+	if err := binary.Write(w, binary.BigEndian, data); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func decodeShardSize(r io.Reader) (uint64, error) {
-	u64Buf := dataSizePool.Get().([]byte)
-	defer dataSizePool.Put(u64Buf)
-
+func readUint64(r io.Reader) (uint64, error) {
+	u64Buf := make([]byte, 8)
 	if _, err := r.Read(u64Buf); err != nil {
 		return 0, errors.WithStack(err)
 	}
 	return binary.BigEndian.Uint64(u64Buf), nil
 }
 
+func encodeShardSize(w io.Writer, size uint64) error {
+	if err := writeUint64(w, size); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func decodeShardSize(r io.Reader) (uint64, error) {
+	size, err := readUint64(r)
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+	return size, nil
+}
+
 func encodeData(w io.Writer, data []byte) error {
-	if err := binary.Write(w, binary.BigEndian, uint64(len(data))); err != nil {
+	if err := writeUint64(w, uint64(len(data))); err != nil {
 		return errors.WithStack(err)
 	}
 	if _, err := w.Write(data); err != nil {
@@ -115,13 +128,10 @@ func encodeData(w io.Writer, data []byte) error {
 }
 
 func decodeData(r io.Reader) ([]byte, error) {
-	u64Buf := dataSizePool.Get().([]byte)
-	defer dataSizePool.Put(u64Buf)
-
-	if _, err := r.Read(u64Buf); err != nil {
+	size, err := readUint64(r)
+	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	size := binary.BigEndian.Uint64(u64Buf)
 
 	data := make([]byte, size)
 	if _, err := r.Read(data); err != nil {

@@ -3,7 +3,6 @@ package codec
 import (
 	"encoding/binary"
 	"io"
-	"sync"
 	"unsafe"
 
 	"github.com/pkg/errors"
@@ -22,14 +21,6 @@ type Header struct {
 	KeySize  uint64
 	DataSize uint64
 }
-
-var (
-	codecSizePool = &sync.Pool{
-		New: func() interface{} {
-			return make([]byte, 8)
-		},
-	}
-)
 
 func EncodeHeader(w io.Writer, header Header) error {
 	if err := binary.Write(w, binary.BigEndian, header.KeySize); err != nil {
@@ -90,9 +81,7 @@ func Decode(r io.Reader) (string, []byte, error) {
 }
 
 func readUint64(r io.Reader) (uint64, error) {
-	u64Buf := codecSizePool.Get().([]byte)
-	defer codecSizePool.Put(u64Buf)
-
+	u64Buf := make([]byte, 8)
 	if _, err := r.Read(u64Buf); err != nil {
 		return 0, errors.WithStack(err)
 	}
