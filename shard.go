@@ -4,18 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"sync"
 
 	"github.com/octu0/cmap"
 	"github.com/pkg/errors"
-)
-
-var (
-	dataSizePool = &sync.Pool{
-		New: func() any {
-			return make([]byte, 8)
-		},
-	}
 )
 
 type shards struct {
